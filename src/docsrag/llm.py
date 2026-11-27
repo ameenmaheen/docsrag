@@ -28,7 +28,14 @@ class GenerationResult:
 
 class Generator(Protocol):
     def generate(
-        self, prompt: str, system: str | None = None, temperature: float = 0.0
+        self,
+        prompt: str,
+        system: str | None = None, 
+        temperature: float = 0.0,
+        *,
+        seed:int | None = None,
+        stop:list[str] | None= None,
+        max_tokens:int |None=None
     ) -> GenerationResult: ...
 
 
@@ -40,7 +47,7 @@ class OllamaGenerator:
         timeout_s: float = 120.0,
         max_retries: int = 3,
         backoff_s: float = 1.0,
-        max_tokens: int = 15,
+        max_tokens: int = 512,
     ) -> None:
         self.model = model or os.getenv('LLM_MODEL', 'llama3.2:3b')
         url = url or os.getenv('OLLAMA_URL', 'http://localhost:11434')
@@ -50,13 +57,21 @@ class OllamaGenerator:
         self.max_tokens = max_tokens
 
     def generate(
-        self, prompt: str, system: str | None = None, temperature: float = 0.0
+        self,
+        prompt: str, 
+        system: str | None = None, 
+        temperature: float = 0.0,
+        *,
+        seed: int | None = None,
+        stop: list[str] | None = None,
+        max_tokens: int | None = None,
     ) -> GenerationResult:
         messages = []
         if system:
             messages.append({'role': 'system', 'content': system})
         messages.append({'role': 'user', 'content': prompt})
-        resp, latency_s = self._chat_with_retry(messages, temperature)
+        options = self._build_options(temperature,seed,stop,max_tokens)
+        resp, latency_s = self._chat_with_retry(messages, options)
         result = self._to_result(resp, latency_s)
         log.info(
             'model=%s in=%d out=%d latency=%.2fs tok/s=%.1f',
@@ -68,8 +83,22 @@ class OllamaGenerator:
         )
         return result
 
-    def _chat_with_retry(self, messages: list[dict], temperature: float):
-        options = {'temperature': temperature, 'num_predict': self.max_tokens}
+    def _build_options(
+            self,
+            temperature:float,
+            seed:int | None,
+            stop: list[str] |None,
+            max_tokens:int |None
+    )-> dict:
+        limit = max_tokens if max_tokens is not None else self.max_tokens
+        options = {'temperature':temperature,'num_predict':limit}
+        if seed is not None:
+            options['seed'] = seed
+        if stop:
+            options['stop'] = stop
+        return options
+
+    def _chat_with_retry(self, messages: list[dict], options: dict):
         for attempt in range(1, self.max_retries + 1):
             try:
                 start = time.perf_counter()
